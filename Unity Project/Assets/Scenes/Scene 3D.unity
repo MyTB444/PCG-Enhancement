@@ -320,11 +320,10 @@ MonoBehaviour:
   useRandomSeed: 1
   randomFillPercent: 48
   useBSP: 1
-  minLeafSize: 25
+  minLeafSize: 23
   roomPadding: 6
   clearingMinRoomSize: 80
   clearingRadius: 8
-  landmarkChance: 30
   minPassageWidth: 3
   maxPassageWidth: 5
   exitRoomHalfSize: 6

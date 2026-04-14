@@ -2,7 +2,6 @@
 using System.Collections;
 using System.Collections.Generic;
 using System;
-using System.Linq;
 
 /// <summary>
 /// Procedural level generator based on cellular automata.
@@ -75,11 +74,6 @@ public class MapGenerator : MonoBehaviour
 	/// Larger values create more spacious open areas in the forest.
 	[Range(2, 8)]
 	public int clearingRadius = 4;
-
-	/// Percentage chance (0-100) that a landmark (small wall cluster) is placed at an
-	/// eligible position within a large room, adding visual and gameplay variety.
-	[Range(0, 30)]
-	public int landmarkChance = 10;
 
 	/// Minimum radius of passages carved between connected rooms.
 	[Range(1, 5)]
@@ -494,13 +488,14 @@ public class MapGenerator : MonoBehaviour
 		// transforming amorphous CA shapes into distinct forest clearings.
 		CreateClearings(survivingRooms);
 
-		// NEW CODE: place small wall clusters (landmarks) inside large clearings
-		// to represent ancient trees, stone formations, or ruins.
-		PlaceLandmarks(survivingRooms);
-
-		// NEW CODE: apply a gentle smoothing pass to passage edges,
-		// creating more organic, winding forest paths rather than perfectly round tunnels.
+		// NEW CODE: apply smoothing BEFORE landmarks so it doesn't erase them.
+		// Smoothing removes wall cells with < 3 wall neighbours, which would
+		// destroy every single-cell landmark if it ran after them.
 		SmoothPassageEdges();
+
+		// NEW CODE: place small wall clusters (landmarks) inside open areas.
+		// Runs after smoothing so the landmarks are not erased.
+		PlaceLandmarks(survivingRooms);
 
 		// NEW CODE: carve two square exit rooms LAST so that SmoothPassageEdges
 		// cannot erode their walls. The exits must run after all smoothing.
@@ -803,76 +798,73 @@ public class MapGenerator : MonoBehaviour
 
 		foreach (Room room in rooms)
 		{
-			// Only place landmarks in rooms large enough to accommodate them
-			if (room.roomSize < clearingMinRoomSize * 1.5f)
+			// Skip small rooms — not enough space for a column
+			if (room.roomSize < clearingMinRoomSize)
 			{
 				continue;
 			}
 
-			foreach (Coord tile in room.tiles)
+			// Random chance to skip this room entirely (roughly half the rooms get a column)
+			if (prng.Next(0, 100) >= 50)
 			{
-				// Skip tiles on the room boundary to avoid narrowing passages
-				if (IsEdgeTile(tile.tileX, tile.tileY))
+				continue;
+			}
+
+			// Try to find a valid position for the column inside this room.
+			// Shuffle through room tiles randomly and pick the first one
+			// that has a fully clear 7x7 area around it.
+			List<Coord> shuffled = new List<Coord>(room.tiles);
+			for (int i = shuffled.Count - 1; i > 0; i--)
+			{
+				int j = prng.Next(0, i + 1);
+				Coord temp = shuffled[i];
+				shuffled[i] = shuffled[j];
+				shuffled[j] = temp;
+			}
+
+			bool placed = false;
+			foreach (Coord tile in shuffled)
+			{
+				int tx = tile.tileX;
+				int ty = tile.tileY;
+
+				// Need a 7x7 clear area (3x3 column + 2 margin each side)
+				if (tx < 4 || tx >= width - 4 || ty < 4 || ty >= height - 4)
 				{
 					continue;
 				}
 
-				// Check that the tile has a wide empty neighbourhood (5x5 clear area)
-				// to avoid placing landmarks in narrow corridors
-				if (!HasClearNeighbourhood(tile.tileX, tile.tileY, 2))
+				// Check the 7x7 area is fully empty
+				bool clear = true;
+				for (int nx = tx - 3; nx <= tx + 3 && clear; nx++)
+				{
+					for (int ny = ty - 3; ny <= ty + 3 && clear; ny++)
+					{
+						if (map[nx, ny] != 0)
+						{
+							clear = false;
+						}
+					}
+				}
+
+				if (!clear)
 				{
 					continue;
 				}
 
-				// Random chance to place a landmark at this position
-				if (prng.Next(0, 100) < landmarkChance)
+				// Place a 3x3 wall block — looks like a ruined column or pillar
+				for (int bx = tx - 1; bx <= tx + 1; bx++)
 				{
-					map[tile.tileX, tile.tileY] = 1;
+					for (int by = ty - 1; by <= ty + 1; by++)
+					{
+						map[bx, by] = 1;
+					}
 				}
-			}
-		}
-	}
 
-	/// <summary>
-	/// NEW CODE — helper for PlaceLandmarks.
-	/// Returns true if the cell at (x, y) is adjacent to at least one wall cell,
-	/// meaning it lies on the boundary between open and wall regions.
-	/// </summary>
-	bool IsEdgeTile(int x, int y)
-	{
-		for (int nx = x - 1; nx <= x + 1; nx++)
-		{
-			for (int ny = y - 1; ny <= y + 1; ny++)
-			{
-				if (nx == x && ny == y) continue;
-				if (!IsInMapRange(nx, ny) || map[nx, ny] == 1)
-				{
-					return true;
-				}
+				placed = true;
+				break; // Only one column per room
 			}
 		}
-		return false;
-	}
-
-	/// <summary>
-	/// NEW CODE — helper for PlaceLandmarks.
-	/// Returns true if all cells within a square of the given radius around (x, y)
-	/// are empty (0). Used to ensure landmarks and structures are placed only
-	/// in spacious areas where they will not block movement.
-	/// </summary>
-	bool HasClearNeighbourhood(int x, int y, int radius)
-	{
-		for (int nx = x - radius; nx <= x + radius; nx++)
-		{
-			for (int ny = y - radius; ny <= y + radius; ny++)
-			{
-				if (!IsInMapRange(nx, ny) || map[nx, ny] == 1)
-				{
-					return false;
-				}
-			}
-		}
-		return true;
 	}
 
 	/// <summary>
