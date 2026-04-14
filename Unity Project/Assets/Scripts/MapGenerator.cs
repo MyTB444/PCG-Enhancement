@@ -484,22 +484,17 @@ public class MapGenerator : MonoBehaviour
 
 		// --- NEW CODE: Stage 3 enhancements ---
 
-		// NEW CODE: carve circular clearings at the centres of large rooms,
-		// transforming amorphous CA shapes into distinct forest clearings.
-		CreateClearings(survivingRooms);
-
-		// NEW CODE: apply smoothing BEFORE landmarks so it doesn't erase them.
-		// Smoothing removes wall cells with < 3 wall neighbours, which would
-		// destroy every single-cell landmark if it ran after them.
+		// NEW CODE: apply smoothing first so it can't erase exit walls, columns, or clearings.
 		SmoothPassageEdges();
 
-		// NEW CODE: place small wall clusters (landmarks) inside open areas.
-		// Runs after smoothing so the landmarks are not erased.
-		PlaceLandmarks(survivingRooms);
-
-		// NEW CODE: carve two square exit rooms LAST so that SmoothPassageEdges
-		// cannot erode their walls. The exits must run after all smoothing.
+		// NEW CODE: carve exit rooms after smoothing so their walls survive.
 		CreateExitRoom(survivingRooms);
+
+		// NEW CODE: carve circular clearings after exits so we can skip rooms near exits.
+		CreateClearings(survivingRooms);
+
+		// NEW CODE: place column landmarks last, excluding exit areas.
+		PlaceLandmarks(survivingRooms);
 
 		// NEW CODE: store the surviving rooms for use by agents and evaluation
 		currentRooms = survivingRooms;
@@ -534,6 +529,25 @@ public class MapGenerator : MonoBehaviour
 			}
 			centreX /= room.tiles.Count;
 			centreY /= room.tiles.Count;
+
+			// Skip this room if its centroid falls inside or near an exit room,
+			// so clearings don't carve into exit walls
+			int cx = Mathf.RoundToInt(centreX);
+			int cy = Mathf.RoundToInt(centreY);
+			bool nearExit = false;
+			foreach (Coord ec in exitCentres)
+			{
+				if (cx >= ec.tileX - exitRoomHalfSize - 2 && cx <= ec.tileX + exitRoomHalfSize + 2 &&
+					cy >= ec.tileY - exitRoomHalfSize - 2 && cy <= ec.tileY + exitRoomHalfSize + 2)
+				{
+					nearExit = true;
+					break;
+				}
+			}
+			if (nearExit)
+			{
+				continue;
+			}
 
 			// Determine clearing radius: larger rooms get slightly bigger clearings
 			int radius = clearingRadius;
@@ -827,6 +841,22 @@ public class MapGenerator : MonoBehaviour
 			{
 				int tx = tile.tileX;
 				int ty = tile.tileY;
+
+				// Skip tiles inside or near any exit room
+				bool insideExit = false;
+				foreach (Coord ec in exitCentres)
+				{
+					if (tx >= ec.tileX - exitRoomHalfSize - 1 && tx <= ec.tileX + exitRoomHalfSize + 1 &&
+						ty >= ec.tileY - exitRoomHalfSize - 1 && ty <= ec.tileY + exitRoomHalfSize + 1)
+					{
+						insideExit = true;
+						break;
+					}
+				}
+				if (insideExit)
+				{
+					continue;
+				}
 
 				// Need a 7x7 clear area (3x3 column + 2 margin each side)
 				if (tx < 4 || tx >= width - 4 || ty < 4 || ty >= height - 4)
