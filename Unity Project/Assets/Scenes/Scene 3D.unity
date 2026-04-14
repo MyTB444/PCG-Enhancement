@@ -325,7 +325,7 @@ MonoBehaviour:
   clearingMinRoomSize: 80
   clearingRadius: 8
   minPassageWidth: 3
-  maxPassageWidth: 5
+  maxPassageWidth: 8
   exitRoomHalfSize: 6
 --- !u!4 &509230443
 Transform:

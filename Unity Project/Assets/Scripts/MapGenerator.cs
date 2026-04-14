@@ -6,7 +6,7 @@ using System;
 /// <summary>
 /// Procedural level generator based on cellular automata.
 /// Original code by Sebastian Lague (Procedural Cave Generation tutorial).
-/// Modified for "Verdant Labyrinth" — a forest-themed exploration game.
+/// Modified for a mage tower/library themed game.
 /// 
 /// Modifications:
 ///   Stage 1: BSP (Binary Space Partition) cell initialisation (replaces pure random fill).
@@ -215,7 +215,7 @@ public class MapGenerator : MonoBehaviour
 	/// The cellular automata smoothing in Stage 2 then softens the sharp
 	/// rectangular edges into organic, natural-looking shapes while preserving
 	/// the underlying room structure — producing levels that feel both
-	/// structured and organic, fitting the overgrown-ruins concept.
+	/// structured and organic, fitting the library concept.
 	/// </summary>
 	void BSPFillMap()
 	{
@@ -505,10 +505,9 @@ public class MapGenerator : MonoBehaviour
 	/// For each room exceeding clearingMinRoomSize, calculates the centroid of
 	/// the room tiles and carves a circular clearing of radius clearingRadius.
 	/// This transforms irregular cellular automata regions into recognisable
-	/// open clearings, reinforcing the forest-clearing theme.
+	/// open clearings, reinforcing the library theme.
 	///
-	/// The main room receives a larger clearing to serve as a natural starting
-	/// area and landmark for navigation.
+	/// The main room receives a larger clearing.
 	/// </summary>
 	void CreateClearings(List<Room> rooms)
 	{
@@ -786,7 +785,7 @@ public class MapGenerator : MonoBehaviour
 		for (int y = cy - halfGap; y <= cy + halfGap; y++)
 			if (IsInMapRange(cx + s, y)) map[cx + s, y] = 0;
 
-		// --- Step 4: Clear the four corners so no stray wall blocks remain ---
+		// --- Step 4: Clear the four corners a bit ---
 		if (IsInMapRange(cx - s, cy - s)) map[cx - s, cy - s] = 0; // bottom-left
 		if (IsInMapRange(cx + s, cy - s)) map[cx + s, cy - s] = 0; // bottom-right
 		if (IsInMapRange(cx - s, cy + s)) map[cx - s, cy + s] = 0; // top-left
