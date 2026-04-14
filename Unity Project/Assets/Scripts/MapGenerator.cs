@@ -10,8 +10,8 @@ using System.Linq;
 /// Modified for "Verdant Labyrinth" — a forest-themed exploration game.
 /// 
 /// Modifications:
-///   Stage 1: Perlin noise-based cell initialisation (replaces pure random fill).
-///   Stage 3: Enhanced post-processing with clearings, entrance structures,
+///   Stage 1: BSP (Binary Space Partition) cell initialisation (replaces pure random fill).
+///   Stage 3: Enhanced post-processing with clearings, exit rooms,
 ///            landmarks, and variable-width passages.
 /// </summary>
 public class MapGenerator : MonoBehaviour
@@ -39,42 +39,27 @@ public class MapGenerator : MonoBehaviour
 	[Range(0, 100)]
 	public int randomFillPercent;
 
-	// ----- NEW CODE: Stage 1 — Perlin Noise Parameters -----
-	// These parameters control the fractal Perlin noise used to initialise the map
-	// grid, producing organic terrain shapes instead of uniform random noise.
+	// ----- NEW CODE: Stage 1 — BSP (Binary Space Partition) Parameters -----
+	// These parameters control the BSP algorithm used to initialise the map grid.
+	// The map is recursively split into rectangular leaves, and a room is carved
+	// inside each leaf, producing structured layouts with distinct rooms.
 
-	[Header("NEW — Stage 1: Perlin Noise Initialisation")]
+	[Header("NEW — Stage 1: BSP Initialisation")]
 
-	/// When true, uses Perlin noise initialisation; when false, falls back to original random fill.
-	public bool usePerlinNoise = true;
+	/// When true, uses BSP initialisation; when false, falls back to original random fill.
+	public bool useBSP = true;
 
-	/// Controls the zoom level of the Perlin noise sampling. Larger values produce
-	/// broader, smoother features; smaller values produce finer detail.
-	public float noiseScale = 18f;
+	/// Minimum width or height a BSP leaf can have. Splitting stops when a leaf
+	/// dimension falls below this value. Smaller values produce more, smaller rooms.
+	/// Larger values produce fewer, bigger rooms.
+	[Range(10, 40)]
+	public int minLeafSize = 20;
 
-	/// Number of layered noise samples (octaves). More octaves add finer detail
-	/// on top of the base shape, creating more natural-looking terrain.
-	[Range(1, 8)]
-	public int octaves = 4;
-
-	/// Controls how much each successive octave contributes to the final value.
-	/// Lower values make higher octaves fade out quickly (smoother result).
-	[Range(0f, 1f)]
-	public float persistence = 0.5f;
-
-	/// Controls how much the frequency increases per octave. Higher values add
-	/// more high-frequency detail in each successive layer.
-	public float lacunarity = 2.0f;
-
-	/// Noise values above this threshold become walls (1); values at or below become
-	/// empty space (0). Adjusting this shifts the balance between open and dense areas.
-	[Range(0.3f, 0.7f)]
-	public float fillThreshold = 0.46f;
-
-	/// Strength of the radial edge gradient. Higher values force more walls near the
-	/// map edges, creating a natural border of dense forest around the playable area.
-	[Range(0f, 0.8f)]
-	public float edgeDensity = 0.35f;
+	/// Number of cells of wall padding between the carved room and the leaf edge.
+	/// Higher values create thicker walls and wider corridors between rooms.
+	/// Lower values make rooms fill more of their leaf, leaving narrow gaps.
+	[Range(1, 6)]
+	public int roomPadding = 3;
 
 	// ----- NEW CODE: Stage 3 — Post-Processing Parameters -----
 	// These parameters control the enhanced post-processing: clearing creation,
@@ -105,15 +90,11 @@ public class MapGenerator : MonoBehaviour
 	[Range(3, 10)]
 	public int maxPassageWidth = 6;
 
-	/// NEW CODE: half-size of the rectangular entrance structure placed in each room.
-	/// A value of 3 creates a 7x7 outline (2*3+1). Represents ruined shrine foundations.
-	[Range(2, 5)]
-	public int structureHalfSize = 3;
-
-	/// NEW CODE: width of the entrance opening in the structure (in cells).
-	/// The opening faces toward the room's nearest passage connection.
-	[Range(1, 5)]
-	public int structureGapWidth = 3;
+	/// NEW CODE: half-size of the square exit room carved into the level.
+	/// A value of 6 creates a 13x13 room (2*6+1). The exit is placed in the room
+	/// furthest from the player's starting area.
+	[Range(4, 10)]
+	public int exitRoomHalfSize = 6;
 
 	// ----- Private state -----
 
@@ -122,6 +103,10 @@ public class MapGenerator : MonoBehaviour
 
 	/// The 2D grid representing the level. 0 = empty/path, 1 = wall/thicket.
 	int[,] map;
+
+	/// NEW CODE: stores the grid positions of the two exit room centres so the
+	/// player can be spawned inside one of them.
+	private List<Coord> exitCentres = new List<Coord>();
 
 	/// NEW CODE: cached list of surviving rooms from the most recent generation,
 	/// used by agents and evaluation scripts to query level structure.
@@ -169,14 +154,14 @@ public class MapGenerator : MonoBehaviour
 		map = new int[width, height];
 
 		// ----- Stage 1: Initialisation -----
-		// NEW CODE: choose between Perlin noise and original random fill
-		if (usePerlinNoise)
+		// NEW CODE: choose between BSP and original random fill
+		if (useBSP)
 		{
-			PerlinFillMap();   // NEW CODE: Perlin noise initialisation
+			BSPFillMap();          // NEW CODE: BSP initialisation
 		}
 		else
 		{
-			RandomFillMap();   // Original random fill (kept as fallback for evaluation)
+			RandomFillMap();       // Original random fill (kept as fallback for evaluation)
 		}
 
 		// ----- Stage 2: Cellular Automata Smoothing -----
@@ -223,81 +208,132 @@ public class MapGenerator : MonoBehaviour
 
 	/// <summary>
 	/// NEW CODE — Stage 1 replacement.
-	/// Fills the map grid using layered Perlin noise (fractal Brownian motion)
-	/// combined with a radial edge gradient.
+	/// Fills the map grid using Binary Space Partition (BSP). The map starts
+	/// entirely solid (all walls). The full area is recursively split into
+	/// smaller rectangular leaves by alternating vertical and horizontal cuts.
+	/// Once a leaf is too small to split further, a room is carved inside it.
 	///
-	/// Technique reference: fractal Brownian motion (fBm) is a standard PCG
-	/// technique combining multiple octaves of coherent noise at increasing
-	/// frequencies to produce natural-looking terrain. See Shaker, Shaker and
-	/// Togelius, "Procedural Content Generation in Games" (Springer, 2016).
+	/// Technique reference: BSP is a classic dungeon generation technique widely
+	/// used in roguelikes such as NetHack. See Shaker, Shaker and Togelius,
+	/// "Procedural Content Generation in Games" (Springer, 2016), Chapter 3.
 	///
-	/// The radial gradient ensures map edges are predominantly walls, creating
-	/// a natural border of dense forest while keeping the interior more open.
+	/// The result is a grid of distinct rectangular rooms separated by walls.
+	/// The cellular automata smoothing in Stage 2 then softens the sharp
+	/// rectangular edges into organic, natural-looking shapes while preserving
+	/// the underlying room structure — producing levels that feel both
+	/// structured and organic, fitting the overgrown-ruins concept.
 	/// </summary>
-	void PerlinFillMap()
+	void BSPFillMap()
 	{
-		// Derive a deterministic seed for noise offsets
+		// Derive a deterministic seed
 		if (useRandomSeed)
 		{
 			seed = Time.time.ToString();
 		}
 
-		System.Random pseudoRandom = new System.Random(seed.GetHashCode());
+		System.Random prng = new System.Random(seed.GetHashCode());
 
-		// NEW CODE: randomised offsets ensure each seed produces a unique noise pattern.
-		// Without offsets, Perlin noise always samples the same region of noise space.
-		float offsetX = pseudoRandom.Next(-100000, 100000);
-		float offsetY = pseudoRandom.Next(-100000, 100000);
-
-		// Precompute the max distance from centre for gradient normalisation
-		float maxDist = Mathf.Sqrt((width / 2f) * (width / 2f) + (height / 2f) * (height / 2f));
-
+		// NEW CODE: start with a fully solid grid (all walls).
+		// BSP then carves rooms into this solid space.
 		for (int x = 0; x < width; x++)
 		{
 			for (int y = 0; y < height; y++)
 			{
-				// Force the outermost ring of cells to be walls, ensuring a sealed boundary
-				if (x == 0 || x == width - 1 || y == 0 || y == height - 1)
+				map[x, y] = 1;
+			}
+		}
+
+		// --- BSP recursive splitting ---
+		// Each leaf is stored as an int array: [startX, startY, leafWidth, leafHeight].
+		// We split leaves until they are smaller than minLeafSize, then carve rooms.
+		List<int[]> leaves = new List<int[]>();
+		List<int[]> toProcess = new List<int[]>();
+
+		// Start with the full map minus a 1-cell border on all sides
+		toProcess.Add(new int[] { 1, 1, width - 2, height - 2 });
+
+		while (toProcess.Count > 0)
+		{
+			int[] current = toProcess[0];
+			toProcess.RemoveAt(0);
+
+			int lx = current[0];  // leaf start X
+			int ly = current[1];  // leaf start Y
+			int lw = current[2];  // leaf width
+			int lh = current[3];  // leaf height
+
+			// Check if this leaf can be split in each direction
+			bool canSplitH = lh >= minLeafSize * 2;
+			bool canSplitV = lw >= minLeafSize * 2;
+
+			if (!canSplitH && !canSplitV)
+			{
+				// Too small to split — this becomes a final leaf
+				leaves.Add(current);
+				continue;
+			}
+
+			// Choose split direction: prefer splitting the longer axis.
+			// If both axes are long enough, split the longer one to keep
+			// rooms roughly square. Adds randomness when dimensions are similar.
+			bool splitHorizontal;
+			if (canSplitH && canSplitV)
+			{
+				splitHorizontal = (lh > lw) || (lh == lw && prng.Next(0, 2) == 0);
+			}
+			else
+			{
+				splitHorizontal = canSplitH;
+			}
+
+			if (splitHorizontal)
+			{
+				// Split horizontally: choose a Y position within the valid range
+				int splitPos = ly + prng.Next(minLeafSize, lh - minLeafSize + 1);
+				toProcess.Add(new int[] { lx, ly, lw, splitPos - ly });
+				toProcess.Add(new int[] { lx, splitPos, lw, ly + lh - splitPos });
+			}
+			else
+			{
+				// Split vertically: choose an X position within the valid range
+				int splitPos = lx + prng.Next(minLeafSize, lw - minLeafSize + 1);
+				toProcess.Add(new int[] { lx, ly, splitPos - lx, lh });
+				toProcess.Add(new int[] { splitPos, ly, lx + lw - splitPos, lh });
+			}
+		}
+
+		// --- Carve a room inside each final leaf ---
+		// Each room is the leaf area shrunk inward by roomPadding on all sides.
+		// The padding becomes the walls/corridors between rooms.
+		foreach (int[] leaf in leaves)
+		{
+			int lx = leaf[0];
+			int ly = leaf[1];
+			int lw = leaf[2];
+			int lh = leaf[3];
+
+			// Calculate room bounds within the leaf
+			int roomX = lx + roomPadding;
+			int roomY = ly + roomPadding;
+			int roomW = lw - roomPadding * 2;
+			int roomH = lh - roomPadding * 2;
+
+			// Skip if the room would be too small after padding
+			if (roomW < 3 || roomH < 3)
+			{
+				continue;
+			}
+
+			// Carve the room (set all cells to empty)
+			for (int x = roomX; x < roomX + roomW; x++)
+			{
+				for (int y = roomY; y < roomY + roomH; y++)
 				{
-					map[x, y] = 1;
-					continue;
+					if (IsInMapRange(x, y))
+					{
+						map[x, y] = 0;
+					}
 				}
-
-				// NEW CODE: accumulate multiple octaves of Perlin noise (fBm)
-				float noiseValue = 0f;
-				float amplitude = 1f;
-				float frequency = 1f;
-				float maxAmplitude = 0f;
-
-				for (int o = 0; o < octaves; o++)
-				{
-					// Sample coordinates scaled by frequency and offset by seed
-					float sampleX = (x + offsetX) / noiseScale * frequency;
-					float sampleY = (y + offsetY) / noiseScale * frequency;
-
-					float perlin = Mathf.PerlinNoise(sampleX, sampleY);
-					noiseValue += perlin * amplitude;
-					maxAmplitude += amplitude;
-
-					// Each successive octave has reduced amplitude and increased frequency
-					amplitude *= persistence;
-					frequency *= lacunarity;
-				}
-
-				// Normalise to 0-1 range
-				noiseValue /= maxAmplitude;
-
-				// NEW CODE: radial gradient — cells further from the centre are biased
-				// toward becoming walls, creating a natural dense-forest border.
-				float distFromCentre = Mathf.Sqrt(
-					Mathf.Pow(x - width / 2f, 2) + Mathf.Pow(y - height / 2f, 2)
-				);
-				float normalizedDist = distFromCentre / maxDist;
-				noiseValue += normalizedDist * edgeDensity;
-
-				// Threshold: values above fillThreshold become walls (dense forest),
-				// values at or below become empty space (paths/clearings)
-				map[x, y] = (noiseValue > fillThreshold) ? 1 : 0;
 			}
 		}
 	}
@@ -399,7 +435,7 @@ public class MapGenerator : MonoBehaviour
 	/// 
 	/// NEW CODE additions:
 	///   - CreateClearings(): carves circular open areas in large rooms.
-	///   - PlaceRoomStructures(): places a rectangular entrance in every room.
+	///   - CreateExitRoom(): carves two square exit chambers in the furthest rooms.
 	///   - PlaceLandmarks(): adds small wall clusters inside large clearings.
 	///   - SmoothPassageEdges(): softens corridor boundaries for a natural look.
 	/// </summary>
@@ -458,10 +494,6 @@ public class MapGenerator : MonoBehaviour
 		// transforming amorphous CA shapes into distinct forest clearings.
 		CreateClearings(survivingRooms);
 
-		// NEW CODE: place a rectangular entrance/shrine structure in every room,
-		// representing ruins of the forgotten civilisation overgrown by the forest.
-		PlaceRoomStructures(survivingRooms);
-
 		// NEW CODE: place small wall clusters (landmarks) inside large clearings
 		// to represent ancient trees, stone formations, or ruins.
 		PlaceLandmarks(survivingRooms);
@@ -469,6 +501,10 @@ public class MapGenerator : MonoBehaviour
 		// NEW CODE: apply a gentle smoothing pass to passage edges,
 		// creating more organic, winding forest paths rather than perfectly round tunnels.
 		SmoothPassageEdges();
+
+		// NEW CODE: carve two square exit rooms LAST so that SmoothPassageEdges
+		// cannot erode their walls. The exits must run after all smoothing.
+		CreateExitRoom(survivingRooms);
 
 		// NEW CODE: store the surviving rooms for use by agents and evaluation
 		currentRooms = survivingRooms;
@@ -523,158 +559,232 @@ public class MapGenerator : MonoBehaviour
 
 	/// <summary>
 	/// NEW CODE — Stage 3 enhancement.
-	/// Places a rectangular wall outline (resembling a ruined entrance or shrine
-	/// foundation) in every surviving room. The structure is a square perimeter of
-	/// wall cells with a gap on one side acting as an opening/entrance.
+	/// Creates exactly two square exit rooms. First tries to place them in the
+	/// two rooms furthest from the main room. If fewer than two candidate rooms
+	/// exist, uses fixed fallback positions (bottom-left and top-right quadrants)
+	/// so that two exits are always guaranteed regardless of level layout.
 	///
-	/// The opening faces toward the room's nearest connected room, creating a sense
-	/// of directionality — the entrance points toward the corridor leading to the
-	/// next room. The structure is placed at the room's centroid, ensuring it sits
-	/// inside the clearing carved by CreateClearings().
-	///
-	/// Safety checks ensure the structure only appears if the surrounding area is
-	/// fully open, preventing it from merging with existing walls.
-	///
-	/// This gives every room a recognisable architectural focal point, reinforcing
-	/// the game concept of a forest grown over ancient ruins.
+	/// Exit centres are stored in exitCentres so SpawnPlayer can place the
+	/// player inside one of them.
 	/// </summary>
-	void PlaceRoomStructures(List<Room> rooms)
+	void CreateExitRoom(List<Room> rooms)
 	{
-		foreach (Room room in rooms)
+		exitCentres.Clear();
+
+		int s = exitRoomHalfSize;
+		int margin = s + 3;
+
+		// --- Collect candidate positions from room centroids ---
+		float mainCx = width / 2f;
+		float mainCy = height / 2f;
+
+		if (rooms != null && rooms.Count > 0)
 		{
-			// Calculate centroid of this room
-			float centreX = 0;
-			float centreY = 0;
-			foreach (Coord tile in room.tiles)
+			Room mainRoom = rooms.Find(r => r.isMainRoom);
+			if (mainRoom == null) mainRoom = rooms[0];
+
+			mainCx = 0; mainCy = 0;
+			foreach (Coord tile in mainRoom.tiles)
 			{
-				centreX += tile.tileX;
-				centreY += tile.tileY;
+				mainCx += tile.tileX;
+				mainCy += tile.tileY;
 			}
-			centreX /= room.tiles.Count;
-			centreY /= room.tiles.Count;
+			mainCx /= mainRoom.tiles.Count;
+			mainCy /= mainRoom.tiles.Count;
+		}
 
-			int cx = Mathf.RoundToInt(centreX);
-			int cy = Mathf.RoundToInt(centreY);
+		// Rank non-main rooms by distance from main room
+		List<Room> candidates = new List<Room>();
+		List<float> dists = new List<float>();
 
-			// Check the structure fits within the map bounds (footprint + 1-cell margin)
-			int s = structureHalfSize;
-			if (!IsInMapRange(cx - s - 1, cy - s - 1) || !IsInMapRange(cx + s + 1, cy + s + 1))
+		if (rooms != null)
+		{
+			foreach (Room room in rooms)
 			{
-				continue;
-			}
-
-			// Verify the entire footprint plus a 1-cell border is open space,
-			// so the structure does not merge with existing walls
-			if (!HasClearNeighbourhood(cx, cy, s + 1))
-			{
-				continue;
-			}
-
-			// Determine which side the opening faces: toward the nearest connected room
-			// 0 = south (bottom), 1 = north (top), 2 = west (left), 3 = east (right)
-			int openSide = GetOpeningSide(room, cx, cy);
-
-			// Build the rectangular outline with an opening on one side
-			for (int x = cx - s; x <= cx + s; x++)
-			{
-				for (int y = cy - s; y <= cy + s; y++)
+				if (room.isMainRoom) continue;
+				float cx = 0, cy = 0;
+				foreach (Coord tile in room.tiles)
 				{
-					// Only place walls on the perimeter of the rectangle
-					bool isPerimeter = (x == cx - s || x == cx + s || y == cy - s || y == cy + s);
-					if (!isPerimeter)
-					{
-						continue;
-					}
-
-					// Leave a gap on the opening side to form the entrance
-					if (IsInGap(x, y, cx, cy, s, openSide))
-					{
-						continue;
-					}
-
-					if (IsInMapRange(x, y))
-					{
-						map[x, y] = 1;
-					}
+					cx += tile.tileX;
+					cy += tile.tileY;
 				}
+				cx /= room.tiles.Count;
+				cy /= room.tiles.Count;
+				float dist = (cx - mainCx) * (cx - mainCx) + (cy - mainCy) * (cy - mainCy);
+				candidates.Add(room);
+				dists.Add(dist);
 			}
 		}
-	}
 
-	/// <summary>
-	/// NEW CODE — helper for PlaceRoomStructures.
-	/// Determines which side of the structure should have the opening by finding
-	/// the direction toward the nearest connected room's centroid.
-	/// Returns 0 (south), 1 (north), 2 (west), or 3 (east).
-	///
-	/// This makes the entrance face the corridor leading to the closest neighbour,
-	/// so the structure feels integrated into the level's navigation flow.
-	/// </summary>
-	int GetOpeningSide(Room room, int cx, int cy)
-	{
-		if (room.connectedRooms == null || room.connectedRooms.Count == 0)
+		// Find the furthest room for exit 1
+		int firstIdx = -1; float firstDist = -1;
+		for (int i = 0; i < candidates.Count; i++)
 		{
-			return 0; // Default to south if no connections exist
+			if (dists[i] > firstDist) { firstDist = dists[i]; firstIdx = i; }
 		}
 
-		// Find the centroid of the nearest connected room
-		float nearestDist = float.MaxValue;
-		float bestDx = 0;
-		float bestDy = 0;
-
-		foreach (Room connected in room.connectedRooms)
+		// Calculate centroid of exit 1 (needed to enforce distance from exit 2)
+		float firstCx = 0, firstCy = 0;
+		if (firstIdx >= 0)
 		{
-			float connCx = 0, connCy = 0;
-			foreach (Coord tile in connected.tiles)
+			foreach (Coord tile in candidates[firstIdx].tiles)
 			{
-				connCx += tile.tileX;
-				connCy += tile.tileY;
+				firstCx += tile.tileX;
+				firstCy += tile.tileY;
 			}
-			connCx /= connected.tiles.Count;
-			connCy /= connected.tiles.Count;
+			firstCx /= candidates[firstIdx].tiles.Count;
+			firstCy /= candidates[firstIdx].tiles.Count;
+		}
 
-			float dist = (connCx - cx) * (connCx - cx) + (connCy - cy) * (connCy - cy);
-			if (dist < nearestDist)
+		// Find exit 2: must be far from BOTH the main room AND exit 1.
+		// Minimum distance between the two exits is 1/3 of the map diagonal.
+		float minExitSeparation = (width * width + height * height) / 9f; // squared distance threshold
+		int secondIdx = -1; float secondDist = -1;
+		for (int i = 0; i < candidates.Count; i++)
+		{
+			if (i == firstIdx) continue;
+
+			// Check distance from exit 1
+			float cx = 0, cy = 0;
+			foreach (Coord tile in candidates[i].tiles)
 			{
-				nearestDist = dist;
-				bestDx = connCx - cx;
-				bestDy = connCy - cy;
+				cx += tile.tileX;
+				cy += tile.tileY;
+			}
+			cx /= candidates[i].tiles.Count;
+			cy /= candidates[i].tiles.Count;
+
+			float distFromFirst = (cx - firstCx) * (cx - firstCx) + (cy - firstCy) * (cy - firstCy);
+
+			// Only consider this room if it's far enough from exit 1
+			if (distFromFirst >= minExitSeparation && dists[i] > secondDist)
+			{
+				secondDist = dists[i];
+				secondIdx = i;
 			}
 		}
 
-		// The opening faces the dominant axis direction toward the nearest room
-		if (Mathf.Abs(bestDx) > Mathf.Abs(bestDy))
+		// --- Place exit 1 ---
+		if (firstIdx >= 0)
 		{
-			return bestDx > 0 ? 3 : 2; // East or West
+			BuildSquareExit(candidates[firstIdx], s, margin);
 		}
 		else
 		{
-			return bestDy > 0 ? 1 : 0; // North or South
+			// Fallback: fixed position in bottom-left quadrant
+			BuildSquareExitAt(margin, margin, s);
+		}
+
+		// --- Place exit 2 ---
+		if (secondIdx >= 0)
+		{
+			BuildSquareExit(candidates[secondIdx], s, margin);
+		}
+		else
+		{
+			// Fallback: opposite corner from exit 1, guaranteeing separation
+			if (firstCx < width / 2f)
+				BuildSquareExitAt(width - margin - 1, height - margin - 1, s);
+			else
+				BuildSquareExitAt(margin, margin, s);
 		}
 	}
 
 	/// <summary>
-	/// NEW CODE — helper for PlaceRoomStructures.
-	/// Returns true if the cell (x, y) falls within the entrance gap on the
-	/// specified side of the structure. The gap is centred on that side's edge
-	/// and has a width of structureGapWidth cells.
+	/// NEW CODE — helper for CreateExitRoom.
+	/// Builds a square exit at a room's centroid, clamped to stay within the map.
+	/// Stores the centre position in exitCentres for player spawning.
 	/// </summary>
-	bool IsInGap(int x, int y, int cx, int cy, int halfSize, int openSide)
+	void BuildSquareExit(Room room, int s, int margin)
 	{
-		int halfGap = structureGapWidth / 2;
-
-		switch (openSide)
+		float centreX = 0, centreY = 0;
+		foreach (Coord tile in room.tiles)
 		{
-			case 0: // South — gap on the bottom edge (y == cy - halfSize)
-				return y == cy - halfSize && x >= cx - halfGap && x <= cx + halfGap;
-			case 1: // North — gap on the top edge (y == cy + halfSize)
-				return y == cy + halfSize && x >= cx - halfGap && x <= cx + halfGap;
-			case 2: // West — gap on the left edge (x == cx - halfSize)
-				return x == cx - halfSize && y >= cy - halfGap && y <= cy + halfGap;
-			case 3: // East — gap on the right edge (x == cx + halfSize)
-				return x == cx + halfSize && y >= cy - halfGap && y <= cy + halfGap;
+			centreX += tile.tileX;
+			centreY += tile.tileY;
 		}
-		return false;
+		centreX /= room.tiles.Count;
+		centreY /= room.tiles.Count;
+
+		int cx = Mathf.Clamp(Mathf.RoundToInt(centreX), margin, width - margin - 1);
+		int cy = Mathf.Clamp(Mathf.RoundToInt(centreY), margin, height - margin - 1);
+
+		BuildSquareExitAt(cx, cy, s);
+	}
+
+	/// <summary>
+	/// NEW CODE — helper for CreateExitRoom.
+	/// Builds a single square exit chamber at exact grid position (cx, cy).
+	///
+	/// Steps:
+	///   1. Clear the square interior plus a 1-cell margin around the centroid.
+	///   2. Build a solid wall perimeter forming a sharp-edged rectangle.
+	///   3. Punch wide doorways on each of the four sides.
+	///   4. Clear the four corner cells so no stray wall blocks remain.
+	///   5. Store the centre in exitCentres so the player can spawn there.
+	///
+	/// Connectivity is handled by CreateExitRoom which draws a passage from
+	/// each exit to the map centre after all exits are built.
+	/// </summary>
+	void BuildSquareExitAt(int cx, int cy, int s)
+	{
+		// Clamp to guarantee it fits
+		cx = Mathf.Clamp(cx, s + 2, width - s - 3);
+		cy = Mathf.Clamp(cy, s + 2, height - s - 3);
+
+		// --- Step 1: Clear the square interior plus a 1-cell margin ---
+		for (int x = cx - s - 1; x <= cx + s + 1; x++)
+		{
+			for (int y = cy - s - 1; y <= cy + s + 1; y++)
+			{
+				if (IsInMapRange(x, y))
+				{
+					map[x, y] = 0;
+				}
+			}
+		}
+
+		// --- Step 2: Build the square wall perimeter ---
+		for (int x = cx - s; x <= cx + s; x++)
+		{
+			for (int y = cy - s; y <= cy + s; y++)
+			{
+				bool isPerimeter = (x == cx - s || x == cx + s || y == cy - s || y == cy + s);
+				if (isPerimeter && IsInMapRange(x, y))
+				{
+					map[x, y] = 1;
+				}
+			}
+		}
+
+		// --- Step 3: Punch wide doorways on all four sides ---
+		// halfGap = 3 creates a 7-cell opening, wide enough for the player to pass through
+		int halfGap = 3;
+
+		// South wall
+		for (int x = cx - halfGap; x <= cx + halfGap; x++)
+			if (IsInMapRange(x, cy - s)) map[x, cy - s] = 0;
+
+		// North wall
+		for (int x = cx - halfGap; x <= cx + halfGap; x++)
+			if (IsInMapRange(x, cy + s)) map[x, cy + s] = 0;
+
+		// West wall
+		for (int y = cy - halfGap; y <= cy + halfGap; y++)
+			if (IsInMapRange(cx - s, y)) map[cx - s, y] = 0;
+
+		// East wall
+		for (int y = cy - halfGap; y <= cy + halfGap; y++)
+			if (IsInMapRange(cx + s, y)) map[cx + s, y] = 0;
+
+		// --- Step 4: Clear the four corners so no stray wall blocks remain ---
+		if (IsInMapRange(cx - s, cy - s)) map[cx - s, cy - s] = 0; // bottom-left
+		if (IsInMapRange(cx + s, cy - s)) map[cx + s, cy - s] = 0; // bottom-right
+		if (IsInMapRange(cx - s, cy + s)) map[cx - s, cy + s] = 0; // top-left
+		if (IsInMapRange(cx + s, cy + s)) map[cx + s, cy + s] = 0; // top-right
+
+		// --- Step 5: Store the exit centre for player spawning ---
+		exitCentres.Add(new Coord(cx, cy));
 	}
 
 	/// <summary>
@@ -745,7 +855,7 @@ public class MapGenerator : MonoBehaviour
 	}
 
 	/// <summary>
-	/// NEW CODE — helper for PlaceLandmarks and PlaceRoomStructures.
+	/// NEW CODE — helper for PlaceLandmarks.
 	/// Returns true if all cells within a square of the given radius around (x, y)
 	/// are empty (0). Used to ensure landmarks and structures are placed only
 	/// in spacious areas where they will not block movement.
@@ -940,10 +1050,10 @@ public class MapGenerator : MonoBehaviour
 	// =====================================================================
 
 	/// <summary>
-	/// Spawns the player at a random empty tile. Destroys any previous player
-	/// instance first to prevent duplicates on map regeneration.
-	/// NEW CODE: prefers spawning in the main room (largest room) for a better
-	/// starting position, falling back to any empty tile if needed.
+	/// Spawns the player inside one of the exit rooms. The first exit centre
+	/// stored during CreateExitRoom is used as the spawn position, placing
+	/// the player directly at the centre of an exit chamber.
+	/// Falls back to any empty tile if no exit centres exist.
 	/// </summary>
 	void SpawnPlayer()
 	{
@@ -952,41 +1062,32 @@ public class MapGenerator : MonoBehaviour
 			Destroy(playerInstance);
 		}
 
-		// NEW CODE: try to spawn in the main room first
-		List<Coord> spawnCandidates = new List<Coord>();
+		// NEW CODE: spawn the player at the centre of the first exit room
+		Vector3 spawnPos;
 
-		if (currentRooms != null && currentRooms.Count > 0)
+		if (exitCentres.Count > 0)
 		{
-			Room mainRoom = currentRooms.Find(r => r.isMainRoom);
-			if (mainRoom != null)
-			{
-				foreach (Coord tile in mainRoom.tiles)
-				{
-					if (!IsEdgeTile(tile.tileX, tile.tileY))
-					{
-						spawnCandidates.Add(tile);
-					}
-				}
-			}
+			Coord spawn = exitCentres[0];
+			spawnPos = CoordToWorldPoint(spawn);
 		}
-
-		// Fallback: use all empty tiles if no main room candidates found
-		if (spawnCandidates.Count == 0)
+		else
 		{
+			// Fallback: find any empty tile
+			List<Coord> emptyTiles = new List<Coord>();
 			for (int x = 0; x < width; x++)
 			{
 				for (int y = 0; y < height; y++)
 				{
 					if (map[x, y] == 0)
 					{
-						spawnCandidates.Add(new Coord(x, y));
+						emptyTiles.Add(new Coord(x, y));
 					}
 				}
 			}
+			Coord spawn = emptyTiles[UnityEngine.Random.Range(0, emptyTiles.Count)];
+			spawnPos = CoordToWorldPoint(spawn);
 		}
 
-		Coord spawn = spawnCandidates[UnityEngine.Random.Range(0, spawnCandidates.Count)];
-		Vector3 spawnPos = CoordToWorldPoint(spawn);
 		playerInstance = Instantiate(playerPrefab, spawnPos, Quaternion.identity);
 	}
 
@@ -1190,18 +1291,18 @@ public class MapGenerator : MonoBehaviour
 	/// returning the raw grid. Used by the Evaluation script to batch-generate
 	/// levels and measure metrics without visual overhead.
 	/// </summary>
-	public int[,] GenerateMapForEvaluation(string evalSeed, bool usePerlin)
+	public int[,] GenerateMapForEvaluation(string evalSeed, bool useBspInit)
 	{
 		seed = evalSeed;
 		useRandomSeed = false;
 		map = new int[width, height];
 
-		bool originalSetting = usePerlinNoise;
-		usePerlinNoise = usePerlin;
+		bool originalSetting = useBSP;
+		useBSP = useBspInit;
 
-		if (usePerlinNoise)
+		if (useBSP)
 		{
-			PerlinFillMap();
+			BSPFillMap();
 		}
 		else
 		{
@@ -1215,7 +1316,7 @@ public class MapGenerator : MonoBehaviour
 
 		ProcessMap();
 
-		usePerlinNoise = originalSetting;
+		useBSP = originalSetting;
 		return (int[,])map.Clone();
 	}
 

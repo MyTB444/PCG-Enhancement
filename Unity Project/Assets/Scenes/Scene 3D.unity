@@ -316,9 +316,18 @@ MonoBehaviour:
   height: 72
   playerPrefab: {fileID: 4297944931752703168, guid: 27e60fc66a3f343bb871872ca442a89a,
     type: 3}
-  seed: 0
+  seed: 81.50159
   useRandomSeed: 1
   randomFillPercent: 48
+  useBSP: 1
+  minLeafSize: 25
+  roomPadding: 6
+  clearingMinRoomSize: 80
+  clearingRadius: 8
+  landmarkChance: 30
+  minPassageWidth: 3
+  maxPassageWidth: 5
+  exitRoomHalfSize: 6
 --- !u!4 &509230443
 Transform:
   m_ObjectHideFlags: 0
