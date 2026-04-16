@@ -54,8 +54,11 @@ public class AgentSpawner : MonoBehaviour
 	/// </summary>
 	public void OnMapGenerated()
 	{
+		Debug.Log($"[AgentSpawner] OnMapGenerated called. mapGenerator={mapGenerator}, " +
+			$"librarianPrefab={librarianPrefab}, guardianPrefab={guardianPrefab}, wispPrefab={wispPrefab}");
 		ClearAgents();
 		SpawnAllAgents();
+		Debug.Log($"[AgentSpawner] After spawn: {spawnedAgents.Count} agents in scene");
 	}
 
 	/// Destroys all currently spawned agents.
@@ -71,20 +74,29 @@ public class AgentSpawner : MonoBehaviour
 	/// Spawns the configured number of each agent type.
 	void SpawnAllAgents()
 	{
-		for (int i = 0; i < librarianCount; i++) SpawnOne(librarianPrefab);
-		for (int i = 0; i < guardianCount; i++) SpawnOne(guardianPrefab);
-		for (int i = 0; i < wispCount; i++) SpawnOne(wispPrefab);
+		for (int i = 0; i < librarianCount; i++) SpawnOne(librarianPrefab, "Librarian");
+		for (int i = 0; i < guardianCount; i++) SpawnOne(guardianPrefab, "Guardian");
+		for (int i = 0; i < wispCount; i++) SpawnOne(wispPrefab, "Wisp");
 	}
 
 	/// Instantiates one agent prefab at a random valid position on the map.
 	/// Injects the MapGenerator reference into whichever agent component is on the prefab.
-	void SpawnOne(GameObject prefab)
+	void SpawnOne(GameObject prefab, string label)
 	{
-		if (prefab == null) return;
+		if (prefab == null)
+		{
+			Debug.LogWarning($"[AgentSpawner] {label} prefab is null — skipping.");
+			return;
+		}
 
 		Vector3 pos;
-		if (!FindRandomOpenPosition(out pos)) return;
+		if (!FindRandomOpenPosition(out pos))
+		{
+			Debug.LogWarning($"[AgentSpawner] Could not find a valid spawn position for {label}.");
+			return;
+		}
 
+		Debug.Log($"[AgentSpawner] Spawning {label} at {pos}");
 		GameObject agent = Instantiate(prefab, pos, Quaternion.identity);
 		spawnedAgents.Add(agent);
 

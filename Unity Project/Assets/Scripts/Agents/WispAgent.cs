@@ -37,12 +37,17 @@ public class WispAgent : MonoBehaviour
 	private Transform playerTransform;
 	private Rigidbody rb;
 
+	/// Called once on spawn. Caches the Rigidbody and sets a random starting
+	/// orbit angle so multiple wisps don't orbit in lockstep.
 	void Start()
 	{
 		rb = GetComponent<Rigidbody>();
 		orbitAngle = Random.Range(0f, 360f);
 	}
 
+	/// Per-frame tick. Refreshes the player reference, selects the appropriate
+	/// state based on distance and landmark proximity, and dispatches to the
+	/// state action.
 	void Update()
 	{
 		// Refresh player reference every frame. The player is destroyed and
@@ -79,6 +84,8 @@ public class WispAgent : MonoBehaviour
 		}
 	}
 
+	/// Follow action: orbit the player at followDistance, rotating around them.
+	/// The orbit angle advances each frame so the wisp visibly circles the player.
 	void TickFollow()
 	{
 		orbitAngle += 45f * Time.deltaTime;
@@ -93,6 +100,7 @@ public class WispAgent : MonoBehaviour
 		Move(dir, followSpeed);
 	}
 
+	/// Point action: drift toward the detected landmark to draw the player's attention.
 	void TickPoint()
 	{
 		Vector3 dir = (landmarkTarget - transform.position).normalized;
@@ -100,6 +108,8 @@ public class WispAgent : MonoBehaviour
 		Move(dir, pointSpeed);
 	}
 
+	/// Catchup action: move quickly directly toward the player. Used when the
+	/// wisp has drifted or been separated by more than leashDistance.
 	void TickCatchup()
 	{
 		Vector3 dir = (playerTransform.position - transform.position).normalized;
@@ -107,6 +117,7 @@ public class WispAgent : MonoBehaviour
 		Move(dir, catchupSpeed);
 	}
 
+	/// Applies movement via Rigidbody where available, otherwise via transform.
 	void Move(Vector3 direction, float speed)
 	{
 		if (rb != null)

@@ -43,12 +43,17 @@ public class GuardianAgent : MonoBehaviour
 	private Transform playerTransform;
 	private Rigidbody rb;
 
+	/// Called once on spawn. Caches the Rigidbody and generates the initial
+	/// patrol route from random empty tiles.
 	void Start()
 	{
 		rb = GetComponent<Rigidbody>();
 		GeneratePatrolRoute();
 	}
 
+	/// Per-frame tick. Refreshes the player reference, evaluates distance-based
+	/// state transitions (Chase > Investigate > Patrol in priority), and
+	/// dispatches to the appropriate state action.
 	void Update()
 	{
 		// Refresh player reference every frame. The player is destroyed and respawned
@@ -99,6 +104,8 @@ public class GuardianAgent : MonoBehaviour
 		}
 	}
 
+	/// Patrol action: walk between fixed anchor points in a loop, advancing to
+	/// the next point on arrival.
 	void TickPatrol()
 	{
 		if (patrolPoints.Count == 0) return;
@@ -114,6 +121,8 @@ public class GuardianAgent : MonoBehaviour
 		}
 	}
 
+	/// Investigate action: move toward the last known player position at medium
+	/// speed. Returns to Patrol if the timer expires or the target is reached.
 	void TickInvestigate()
 	{
 		Vector3 dir = (investigateTarget - transform.position).normalized;
@@ -127,6 +136,7 @@ public class GuardianAgent : MonoBehaviour
 		}
 	}
 
+	/// Chase action: sprint directly toward the player's current position.
 	void TickChase()
 	{
 		if (playerTransform == null) return;
@@ -135,6 +145,7 @@ public class GuardianAgent : MonoBehaviour
 		Move(dir, chaseSpeed);
 	}
 
+	/// Applies movement via Rigidbody where available, otherwise via transform.
 	void Move(Vector3 direction, float speed)
 	{
 		if (rb != null)
@@ -143,6 +154,9 @@ public class GuardianAgent : MonoBehaviour
 			transform.position += direction * speed * Time.deltaTime;
 	}
 
+	/// Picks patrolPointCount random empty tiles from the current map grid and
+	/// stores them as world-space patrol anchors. Called at spawn and whenever
+	/// the patrol list becomes empty (e.g., after a map regeneration).
 	void GeneratePatrolRoute()
 	{
 		patrolPoints.Clear();

@@ -34,6 +34,9 @@ public class LibrarianAgent : MonoBehaviour
 	private Transform playerTransform;
 	private Rigidbody rb;
 
+	/// Called once when the agent is spawned. Caches the Rigidbody reference
+	/// and initialises the drift timer. The player reference is deliberately
+	/// not cached here — it is refreshed every frame in Update.
 	void Start()
 	{
 		rb = GetComponent<Rigidbody>();
@@ -41,6 +44,9 @@ public class LibrarianAgent : MonoBehaviour
 		targetPosition = transform.position;
 	}
 
+	/// Per-frame tick. Refreshes the player reference, runs the FSM selector
+	/// (Fade overrides any other state when the player is close), and dispatches
+	/// to the appropriate state action.
 	void Update()
 	{
 		// Refresh player reference every frame. The player GameObject is destroyed
@@ -75,6 +81,8 @@ public class LibrarianAgent : MonoBehaviour
 		}
 	}
 
+	/// Idle action: count down the idle timer, then choose a new random drift
+	/// target and transition to the Drift state.
 	void TickIdle()
 	{
 		idleTimer -= Time.deltaTime;
@@ -85,6 +93,8 @@ public class LibrarianAgent : MonoBehaviour
 		}
 	}
 
+	/// Drift action: move slowly toward the target position. When close enough,
+	/// transition back to Idle and restart the idle timer.
 	void TickDrift()
 	{
 		Vector3 dir = (targetPosition - transform.position).normalized;
@@ -98,6 +108,7 @@ public class LibrarianAgent : MonoBehaviour
 		}
 	}
 
+	/// Fade action: move directly away from the player at increased speed.
 	void TickFade()
 	{
 		if (playerTransform == null) return;
@@ -106,6 +117,8 @@ public class LibrarianAgent : MonoBehaviour
 		Move(awayDir, fadeSpeed);
 	}
 
+	/// Applies movement via Rigidbody where available, otherwise via transform.
+	/// Rigidbody movement is preferred because it respects physics collisions.
 	void Move(Vector3 direction, float speed)
 	{
 		if (rb != null)
@@ -114,6 +127,9 @@ public class LibrarianAgent : MonoBehaviour
 			transform.position += direction * speed * Time.deltaTime;
 	}
 
+	/// Returns a random world-space position corresponding to an empty tile on
+	/// the current map grid. Tries up to 100 random tiles before giving up and
+	/// returning a random offset from the agent's current position.
 	Vector3 GetRandomOpenPosition()
 	{
 		if (mapGenerator != null && mapGenerator.currentMap != null)

@@ -200,8 +200,8 @@ public class MapGenerator : MonoBehaviour
 		meshGen.GenerateMesh(borderedMap, 1);
 
 		// NEW CODE: notify the AgentSpawner (if present) to respawn agents.
-		// We call it directly here so the timing is deterministic — agents
-		// are always spawned after the player and mesh are ready.
+		// Called directly here so timing is deterministic — agents always spawn
+		// after the player and mesh are ready.
 		AgentSpawner spawner = GetComponent<AgentSpawner>();
 		if (spawner != null)
 		{
@@ -1328,12 +1328,17 @@ public class MapGenerator : MonoBehaviour
 	/// </summary>
 	public int[,] GenerateMapForEvaluation(string evalSeed, bool useBspInit)
 	{
+		// NEW CODE: save the current editor settings so they can be restored at the
+		// end. Without this, running the evaluation leaves seed/useRandomSeed stuck
+		// at eval values, and the next play session keeps regenerating the same level.
+		string savedSeed = seed;
+		bool savedUseRandomSeed = useRandomSeed;
+		bool savedUseBSP = useBSP;
+
 		seed = evalSeed;
 		useRandomSeed = false;
-		map = new int[width, height];
-
-		bool originalSetting = useBSP;
 		useBSP = useBspInit;
+		map = new int[width, height];
 
 		if (useBSP)
 		{
@@ -1351,7 +1356,11 @@ public class MapGenerator : MonoBehaviour
 
 		ProcessMap();
 
-		useBSP = originalSetting;
+		// Restore all modified fields
+		seed = savedSeed;
+		useRandomSeed = savedUseRandomSeed;
+		useBSP = savedUseBSP;
+
 		return (int[,])map.Clone();
 	}
 
