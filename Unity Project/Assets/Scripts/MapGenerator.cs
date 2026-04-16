@@ -6,12 +6,16 @@ using System;
 /// <summary>
 /// Procedural level generator based on cellular automata.
 /// Original code by Sebastian Lague (Procedural Cave Generation tutorial).
-/// Modified for a mage tower/library themed game.
+/// Modified for "Library of the Magus" — an exploration game set inside a
+/// magical tower of interconnected library chambers.
 /// 
 /// Modifications:
 ///   Stage 1: BSP (Binary Space Partition) cell initialisation (replaces pure random fill).
-///   Stage 3: Enhanced post-processing with clearings, exit rooms,
-///            landmarks, and variable-width passages.
+///            Produces structured rectangular rooms that, after CA smoothing, feel like
+///            arcane chambers in an ancient library tower.
+///   Stage 3: Enhanced post-processing with clearings, square exit rooms (portals),
+///            column landmarks (bookshelves/pillars), passage smoothing, and
+///            variable-width corridors.
 /// </summary>
 public class MapGenerator : MonoBehaviour
 {
@@ -194,6 +198,15 @@ public class MapGenerator : MonoBehaviour
 		SpawnPlayer();
 		MeshGenerator meshGen = GetComponent<MeshGenerator>();
 		meshGen.GenerateMesh(borderedMap, 1);
+
+		// NEW CODE: notify the AgentSpawner (if present) to respawn agents.
+		// We call it directly here so the timing is deterministic — agents
+		// are always spawned after the player and mesh are ready.
+		AgentSpawner spawner = GetComponent<AgentSpawner>();
+		if (spawner != null)
+		{
+			spawner.OnMapGenerated();
+		}
 	}
 
 	// =====================================================================
@@ -215,7 +228,7 @@ public class MapGenerator : MonoBehaviour
 	/// The cellular automata smoothing in Stage 2 then softens the sharp
 	/// rectangular edges into organic, natural-looking shapes while preserving
 	/// the underlying room structure — producing levels that feel both
-	/// structured and organic, fitting the library concept.
+	/// structured and organic, fitting the overgrown-ruins concept.
 	/// </summary>
 	void BSPFillMap()
 	{
@@ -505,9 +518,10 @@ public class MapGenerator : MonoBehaviour
 	/// For each room exceeding clearingMinRoomSize, calculates the centroid of
 	/// the room tiles and carves a circular clearing of radius clearingRadius.
 	/// This transforms irregular cellular automata regions into recognisable
-	/// open clearings, reinforcing the library theme.
+	/// open clearings, reinforcing the forest-clearing theme.
 	///
-	/// The main room receives a larger clearing.
+	/// The main room receives a larger clearing to serve as a natural starting
+	/// area and landmark for navigation.
 	/// </summary>
 	void CreateClearings(List<Room> rooms)
 	{
@@ -785,7 +799,7 @@ public class MapGenerator : MonoBehaviour
 		for (int y = cy - halfGap; y <= cy + halfGap; y++)
 			if (IsInMapRange(cx + s, y)) map[cx + s, y] = 0;
 
-		// --- Step 4: Clear the four corners a bit ---
+		// --- Step 4: Clear the four corners so no stray wall blocks remain ---
 		if (IsInMapRange(cx - s, cy - s)) map[cx - s, cy - s] = 0; // bottom-left
 		if (IsInMapRange(cx + s, cy - s)) map[cx + s, cy - s] = 0; // bottom-right
 		if (IsInMapRange(cx - s, cy + s)) map[cx - s, cy + s] = 0; // top-left

@@ -293,6 +293,7 @@ GameObject:
   - component: {fileID: 509230443}
   - component: {fileID: 509230442}
   - component: {fileID: 509230444}
+  - component: {fileID: 509230445}
   m_Layer: 0
   m_Name: Map Generator
   m_TagString: Untagged
@@ -360,6 +361,28 @@ MonoBehaviour:
   walls: {fileID: 777526922}
   cave: {fileID: 663968341}
   is2D: 0
+--- !u!114 &509230445
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 509230441}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1987f83d76ed743128f544ecaef9478e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  librarianPrefab: {fileID: 4297944931752703168, guid: c416fbf6eeff44bd384d3d5ac44dc54c,
+    type: 3}
+  guardianPrefab: {fileID: 4297944931752703168, guid: 53149b4ab2a174b7fa5bb38948393442,
+    type: 3}
+  wispPrefab: {fileID: 4297944931752703168, guid: 75b296e240641499ba91e794791d23b9,
+    type: 3}
+  librarianCount: 3
+  guardianCount: 2
+  wispCount: 1
+  mapGenerator: {fileID: 509230442}
 --- !u!1 &631091595
 GameObject:
   m_ObjectHideFlags: 0
