@@ -20,7 +20,7 @@ Based on Sebastian Lague's *Procedural Cave Generation* tutorial. All new code i
 
 ## Generator Design
 
-The generator modifies Stages 1 and 3 of Lague's pipeline. Stage 2 (cellular automata smoothing) is unchanged.
+The generator modifies Stages 1 and 3 of Lague's pipeline. Stage 2 (cellular automata smoothing) is unchanged. (Make sure random seed is true on map generator!)
 
 ### Stage 1 — BSP (Binary Space Partition)
 
