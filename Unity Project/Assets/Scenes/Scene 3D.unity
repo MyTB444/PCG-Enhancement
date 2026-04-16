@@ -294,6 +294,7 @@ GameObject:
   - component: {fileID: 509230442}
   - component: {fileID: 509230444}
   - component: {fileID: 509230445}
+  - component: {fileID: 509230446}
   m_Layer: 0
   m_Name: Map Generator
   m_TagString: Untagged
@@ -317,8 +318,8 @@ MonoBehaviour:
   height: 72
   playerPrefab: {fileID: 4297944931752703168, guid: 27e60fc66a3f343bb871872ca442a89a,
     type: 3}
-  seed: 81.50159
-  useRandomSeed: 1
+  seed: eval_49
+  useRandomSeed: 0
   randomFillPercent: 48
   useBSP: 1
   minLeafSize: 23
@@ -382,7 +383,24 @@ MonoBehaviour:
   librarianCount: 3
   guardianCount: 2
   wispCount: 1
+  minDistanceFromPlayer: 8
   mapGenerator: {fileID: 509230442}
+--- !u!114 &509230446
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 509230441}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0c7f5798a8bf9461dbd422fb06cdd608, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  mapGenerator: {fileID: 509230442}
+  sampleCount: 50
+  seedBase: eval
+  outputPath: Assets/evaluation_results.csv
 --- !u!1 &631091595
 GameObject:
   m_ObjectHideFlags: 0
